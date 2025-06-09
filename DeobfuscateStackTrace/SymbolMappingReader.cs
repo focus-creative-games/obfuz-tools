@@ -22,6 +22,8 @@ namespace DeobfuscateStackTrace
 
         private readonly Dictionary<string, MethodSignature> _methodSignaturesMapping = new Dictionary<string, MethodSignature>();
 
+        private readonly Dictionary<string, string> _typeNameMappings = new Dictionary<string, string>();
+
         public SymbolMappingReader(string mappingFile)
         {
             LoadXmlMappingFile(mappingFile);
@@ -63,6 +65,17 @@ namespace DeobfuscateStackTrace
 
         private void LoadTypeMapping(XmlElement ele)
         {
+            if (!ele.HasAttribute("fullName"))
+            {
+                throw new System.Exception($"Invalid node name: {ele.Name}. attribute 'fullName' missing.");
+            }
+            if (!ele.HasAttribute("newFullName"))
+            {
+                throw new System.Exception($"Invalid node name: {ele.Name}. attribute 'newFullName' missing.");
+            }
+            string oldFullName = ele.Attributes["fullName"].Value;
+            string newFullName = ele.Attributes["newFullName"].Value;
+            _typeNameMappings[newFullName] = oldFullName;
             foreach (XmlNode node in ele.ChildNodes)
             {
                 if (!(node is XmlElement c))
@@ -217,6 +230,23 @@ namespace DeobfuscateStackTrace
         {
             oldFullSignature = _normalStackTraceRegex.Replace(obfuscatedStackTraceLog, ReplaceNormalStackTraceMatch, 1);
             return oldFullSignature != obfuscatedStackTraceLog;
+        }
+
+        private readonly Regex _typeNameRegex = new Regex(@"\$[$a-zA-Z_]+([./]\$[$a-zA-Z_]+)*", RegexOptions.Compiled);
+
+        private string ReplaceTypeNameMatch(Match m)
+        {
+            string obfuscatedTypeName = m.Value;
+            if (_typeNameMappings.TryGetValue(obfuscatedTypeName, out var originalTypeName))
+            {
+                return originalTypeName;
+            }
+            return obfuscatedTypeName; // Return the original type name if no mapping is found
+        }
+
+        public string TryDeobfuscateTypeName(string obfuscatedStackTraceLog)
+        {
+            return _typeNameRegex.Replace(obfuscatedStackTraceLog, ReplaceTypeNameMatch);
         }
     }
 }
