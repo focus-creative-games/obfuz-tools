@@ -38,18 +38,18 @@ namespace DeobfuscateStackTrace
                 return true;
             }
             deObfuscatedStackTrace = line;
-            if (string.IsNullOrEmpty(line))
-            {
-                logLineFound = false;
-                return false;
-            }
-            if (!logLineFound)
-            {
-                logLineFound = line.StartsWith("UnityEngine.DebugLogHandler:Internal_Log")
-                    || line.StartsWith("UnityEngine.DebugLogHandler:LogFormat")
-                    || line.StartsWith("UnityEngine.Logger:Log");
-                return false;
-            }
+            //if (string.IsNullOrEmpty(line))
+            //{
+            //    logLineFound = false;
+            //    return false;
+            //}
+            //if (!logLineFound)
+            //{
+            //    logLineFound = line.StartsWith("UnityEngine.DebugLogHandler:Internal_Log")
+            //        || line.StartsWith("UnityEngine.DebugLogHandler:LogFormat")
+            //        || line.StartsWith("UnityEngine.Logger:Log");
+            //    return false;
+            //}
             return reader.TryDeobfuscateDebugLogStackTrace(line, out deObfuscatedStackTrace);
         }
     }

@@ -190,12 +190,14 @@ namespace DeobfuscateStackTrace
             return oldFullSignature != obfuscatedStackTraceLog;
         }
 
-        private Regex _normalStackTraceRegex = new Regex(@"^(\S+)(\([^)]*\))", RegexOptions.Compiled);
+        private Regex _normalStackTraceRegex = new Regex(@"^(\S+):(\S+)(\([^)]*\))$", RegexOptions.Compiled);
 
         private string ReplaceNormalStackTraceMatch(Match m)
         {
-            string obfuscatedMethodNameWithDeclaringType = m.Groups[1].Value;
-            string obfuscatedMethodParameters = m.Groups[2].Value;
+            string obfuscatedDeclaringTypeName = m.Groups[1].Value;
+            string obfuscatedMethodName = m.Groups[2].Value;
+            string obfuscatedMethodNameWithDeclaringType = $"{obfuscatedDeclaringTypeName}:{obfuscatedMethodName}";
+            string obfuscatedMethodParameters = m.Groups[3].Value;
             if (_methodSignaturesMapping.TryGetValue(obfuscatedMethodNameWithDeclaringType, out var methodSignature))
             {
                 foreach (var mapping in methodSignature.mappings)
