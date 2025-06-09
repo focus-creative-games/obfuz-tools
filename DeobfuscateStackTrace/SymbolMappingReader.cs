@@ -76,17 +76,6 @@ namespace DeobfuscateStackTrace
             }
         }
 
-
-        private string GetMethodSignatureWithoutParams(string signature)
-        {
-            int index = signature.IndexOf('(');
-            if (index < 0)
-            {
-                return signature;
-            }
-            return signature.Substring(0, index);
-        }
-
         private (string, string) SplitMethodSignature(string signature)
         {
             int index = signature.IndexOf('(');
@@ -129,8 +118,21 @@ namespace DeobfuscateStackTrace
             });
         }
 
-        private Regex _exceptionStackTraceRegex = new Regex(@"^(\s*at\s+)(\S+)\s*(\([^)]*\))(\s+\[\S+]\s+in)", RegexOptions.Compiled);
+        // xxx[T].yyy[K](a,b,c) in /path/to/file:line
+        private Regex _exceptionStackTraceRegex = new Regex(@"^(\s*at\s+)([^\[\]\s]*[^.])((\[[^\[\].\s]+\])?)\.(\S[^\[\].\s]*)((\[[^\[\].\s]+\])?)\s+(\(.*\))(\s+\[\S+\]\s+in)", RegexOptions.Compiled);
 
+
+        private (string, string) SplitMethodNameWithDeclaringTypeName(string name)
+        {
+            int lastColonIndex = name.LastIndexOf(':');
+            if (lastColonIndex != -1)
+            {
+                string declaringTypeName = name.Substring(0, lastColonIndex);
+                string methodName = name.Substring(lastColonIndex + 1);
+                return (declaringTypeName, methodName);
+            }
+            return (string.Empty, name); // Return empty declaring type if no colon is found
+        }
 
         private string ConvertToNormalMethodNameWithDeclaringType(string methodName)
         {
@@ -159,25 +161,30 @@ namespace DeobfuscateStackTrace
 
         private string ReplaceExceptionStackTraceMatch(Match m)
         {
-            string obfuscatedMethodNameWithDeclaringType = m.Groups[2].Value;
-            string obfuscatedExceptionMethodNameWithDeclaringType = ConvertToNormalMethodNameWithDeclaringType(obfuscatedMethodNameWithDeclaringType);
-            string obfuscatedMethodParameters = m.Groups[3].Value;
+            string obfuscatedDeclaringTypeName = m.Groups[2].Value;
+            string obfuscatedMethodName = m.Groups[5].Value;
+            string obfuscatedExceptionMethodNameWithDeclaringType = $"{obfuscatedDeclaringTypeName}:{obfuscatedMethodName}";
+            string obfuscatedMethodParameters = m.Groups[8].Value;
             if (_methodSignaturesMapping.TryGetValue(obfuscatedExceptionMethodNameWithDeclaringType, out var methodSignature))
             {
                 foreach (var mapping in methodSignature.mappings)
                 {
                     if (mapping.newMethodParameters == obfuscatedMethodParameters)
                     {
-                        return $"{m.Groups[1].Value}{ConvertToExceptionMethodNameWithDeclaringType(mapping.oldMethodNameWithDeclaringType)}{mapping.oldMethodParameters}{m.Groups[4].Value}";
+                        (string oldDeclaringTypeName, string oldMethodName) = SplitMethodNameWithDeclaringTypeName(mapping.oldMethodNameWithDeclaringType);
+                        return $"{m.Groups[1].Value}{oldDeclaringTypeName}{m.Groups[3].Value}.{oldMethodName}{m.Groups[6].Value}{mapping.oldMethodParameters} {m.Groups[9].Value}";
                     }
                 }
-                MethodSignatureMapping matchMapping = methodSignature.mappings[0];
-                return $"{m.Groups[1].Value}{ConvertToExceptionMethodNameWithDeclaringType(matchMapping.oldMethodNameWithDeclaringType)}{obfuscatedMethodParameters}{m.Groups[4].Value}";
+                {
+                    MethodSignatureMapping mapping = methodSignature.mappings[0];
+                    (string oldDeclaringTypeName, string oldMethodName) = SplitMethodNameWithDeclaringTypeName(mapping.oldMethodNameWithDeclaringType);
+                    return $"{m.Groups[1].Value}{oldDeclaringTypeName}{m.Groups[3].Value}.{oldMethodName}{m.Groups[6].Value}{obfuscatedMethodParameters} {m.Groups[9].Value}";
+                }
             }
             return m.Value; // Return the original match if no mapping is found
         }
 
-        private bool TryMatchExceptionStackTrace(string obfuscatedStackTraceLog, out string oldFullSignature)
+        public bool TryDeobfuscateExceptionStackTrace(string obfuscatedStackTraceLog, out string oldFullSignature)
         {
             oldFullSignature = _exceptionStackTraceRegex.Replace(obfuscatedStackTraceLog, ReplaceExceptionStackTraceMatch, 1);
             return oldFullSignature != obfuscatedStackTraceLog;
@@ -204,17 +211,10 @@ namespace DeobfuscateStackTrace
             return m.Value; // Return the original match if no mapping is found
         }
 
-        private bool TryMatchNormalStackTrace(string obfuscatedStackTraceLog, out string oldFullSignature)
+        public bool TryDeobfuscateDebugLogStackTrace(string obfuscatedStackTraceLog, out string oldFullSignature)
         {
             oldFullSignature = _normalStackTraceRegex.Replace(obfuscatedStackTraceLog, ReplaceNormalStackTraceMatch, 1);
             return oldFullSignature != obfuscatedStackTraceLog;
-        }
-
-
-        public bool TryDeObfuscateStackTrace(string obfuscatedStackTraceLog, out string deObfuscatedStackTrace)
-        {
-            return TryMatchExceptionStackTrace(obfuscatedStackTraceLog, out deObfuscatedStackTrace)
-                || TryMatchNormalStackTrace(obfuscatedStackTraceLog, out deObfuscatedStackTrace);
         }
     }
 }
