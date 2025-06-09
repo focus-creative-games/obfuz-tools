@@ -13,7 +13,7 @@ namespace DeobfuscateStackTrace
             var obfuscatedLines = File.ReadAllLines(oldLogFile, Encoding.UTF8);
             var deObfuscatedLines = new List<string>();
 
-            bool logLineFound = false;
+            bool logLineFound = true;
             foreach (string line in obfuscatedLines)
             {
                 if (TryConvertLine(line, reader, ref logLineFound, out var newLine))
@@ -34,18 +34,18 @@ namespace DeobfuscateStackTrace
         private static bool TryConvertLine(string line, SymbolMappingReader reader, ref bool logLineFound, out string deObfuscatedStackTrace)
         {
             deObfuscatedStackTrace = line;
-            if (string.IsNullOrEmpty(line))
-            {
-                logLineFound = false;
-                return false;
-            }
-            if (!logLineFound)
-            {
-                logLineFound = line.StartsWith("UnityEngine.DebugLogHandler:Internal_Log")
-                    || line.StartsWith("UnityEngine.DebugLogHandler:LogFormat")
-                    || line.StartsWith("UnityEngine.Logger:Log");
-                return false;
-            }
+            //if (string.IsNullOrEmpty(line))
+            //{
+            //    logLineFound = false;
+            //    return false;
+            //}
+            //if (!logLineFound)
+            //{
+            //    logLineFound = line.StartsWith("UnityEngine.DebugLogHandler:Internal_Log")
+            //        || line.StartsWith("UnityEngine.DebugLogHandler:LogFormat")
+            //        || line.StartsWith("UnityEngine.Logger:Log");
+            //    return false;
+            //}
             return reader.TryDeObfuscateStackTrace(line, out deObfuscatedStackTrace);
         }
     }
