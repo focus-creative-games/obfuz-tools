@@ -8,7 +8,7 @@ namespace DeobfuscateStackTrace
 {
     public class StackTraceDeObfuscator
     {
-        public static void Convert(SymbolMappingReader reader, string oldLogFile, string newLogFile)
+        public static void Convert(SymbolMappingReader reader, string oldLogFile, string newLogFile, bool removeMethodGeneratedByObfuz)
         {
             var obfuscatedLines = File.ReadAllLines(oldLogFile, Encoding.UTF8);
             var deObfuscatedLines = new List<string>();
@@ -18,9 +18,12 @@ namespace DeobfuscateStackTrace
             {
                 if (TryConvertLine(line, reader, ref logLineFound, out var newLine))
                 {
-                    deObfuscatedLines.Add(newLine);
+                    if (!removeMethodGeneratedByObfuz || !newLine.StartsWith("$Obfuz$"))
+                    {
+                        deObfuscatedLines.Add(newLine);
+                    }
                 }
-                else
+                else if (!removeMethodGeneratedByObfuz || !line.StartsWith("$Obfuz$"))
                 {
                     deObfuscatedLines.Add(line);
                 }
