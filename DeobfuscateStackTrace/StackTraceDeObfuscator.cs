@@ -28,6 +28,16 @@ namespace DeobfuscateStackTrace
 {
     public class StackTraceDeObfuscator
     {
+        private static bool IsMethodGeneratedByObfuz(string line)
+        {
+            string trimmed = line.TrimStart();
+            if (trimmed.StartsWith("at "))
+            {
+                trimmed = trimmed.Substring(3);
+            }
+            return trimmed.StartsWith("$Obfuz$");
+        }
+
         public static void Convert(SymbolMappingReader reader, string oldLogFile, string newLogFile, bool removeMethodGeneratedByObfuz)
         {
             var obfuscatedLines = File.ReadAllLines(oldLogFile, Encoding.UTF8);
@@ -40,7 +50,7 @@ namespace DeobfuscateStackTrace
                     newLine = line;
                 }
                 newLine = reader.TryDeobfuscateTypeName(newLine);
-                if (!removeMethodGeneratedByObfuz || !newLine.StartsWith("$Obfuz$"))
+                if (!removeMethodGeneratedByObfuz || !IsMethodGeneratedByObfuz(newLine))
                 {
                     deObfuscatedLines.Add(newLine);
                 }

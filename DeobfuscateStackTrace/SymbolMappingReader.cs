@@ -96,6 +96,11 @@ namespace DeobfuscateStackTrace
             string oldFullName = ele.Attributes["fullName"].Value;
             string newFullName = ele.Attributes["newFullName"].Value;
             _typeNameMappings[newFullName] = oldFullName;
+            if (newFullName.Contains('/'))
+            {
+                // Stack traces usually show nested types as '+' while mapping may use '/'.
+                _typeNameMappings[newFullName.Replace('/', '+')] = oldFullName.Replace('/', '+');
+            }
             foreach (XmlNode node in ele.ChildNodes)
             {
                 if (!(node is XmlElement c))
@@ -138,7 +143,7 @@ namespace DeobfuscateStackTrace
             (string oldMethodNameWithDeclaringType, string oldMethodParameters) = SplitMethodSignature(oldStackTraceSignature);
             (string newMethodNameWithDeclaringType, string newMethodParameters) = SplitMethodSignature(newStackTraceSignature);
 
-            if (!_methodSignaturesMapping.TryGetValue(oldMethodNameWithDeclaringType, out var methodSignature))
+            if (!_methodSignaturesMapping.TryGetValue(newMethodNameWithDeclaringType, out var methodSignature))
             {
                 methodSignature = new MethodSignature { newMethodNameWithDeclaringType = newMethodNameWithDeclaringType, };
                 _methodSignaturesMapping[newMethodNameWithDeclaringType] = methodSignature;
@@ -151,8 +156,14 @@ namespace DeobfuscateStackTrace
             });
         }
 
-        // xxx[T].yyy[K](a,b,c) in /path/to/file:line
-        private Regex _exceptionStackTraceRegex = new Regex(@"^(\s*at\s+)([^\[\]\s]*[^.])((\[[^\[\].\s]+\])?)\.(\S[^\[\].\s]*)((\[[^\[\].\s]+\])?)\s+(\(.*\))(\s+\[\S+\]\s+in)", RegexOptions.Compiled);
+        private static readonly Regex _stackTraceParameterTypeRegex = new Regex(@"(?<![\w.])(?:[A-Za-z_]\w*\.)*([A-Za-z_]\w*)(?:&)?(?=\s+[A-Za-z_]\w*|\s*[,\)])", RegexOptions.Compiled);
+
+        private string NormalizeExceptionParameters(string parameterList)
+        {
+            // Unity stack trace often prints "Namespace.Type argName" and assembly prefixes.
+            // Mapping XML stores canonical forms like "(Object, Int32)".
+            return _stackTraceParameterTypeRegex.Replace(parameterList, m => m.Groups[1].Value);
+        }
 
 
         private (string, string) SplitMethodNameWithDeclaringTypeName(string name)
@@ -192,35 +203,159 @@ namespace DeobfuscateStackTrace
             return methodName; // Return the original method name if no colon is found
         }
 
-        private string ReplaceExceptionStackTraceMatch(Match m)
+        private bool TryParseExceptionStackTraceLine(string line, out string prefix, out string methodId, out string parameters, out string tail)
         {
-            string obfuscatedDeclaringTypeName = m.Groups[2].Value;
-            string obfuscatedMethodName = m.Groups[5].Value;
+            prefix = string.Empty;
+            methodId = string.Empty;
+            parameters = string.Empty;
+            tail = string.Empty;
+
+            if (string.IsNullOrWhiteSpace(line))
+            {
+                return false;
+            }
+
+            int methodStartIndex = 0;
+            while (methodStartIndex < line.Length && char.IsWhiteSpace(line[methodStartIndex]))
+            {
+                methodStartIndex++;
+            }
+
+            if (methodStartIndex + 2 < line.Length &&
+                line[methodStartIndex] == 'a' &&
+                line[methodStartIndex + 1] == 't' &&
+                char.IsWhiteSpace(line[methodStartIndex + 2]))
+            {
+                methodStartIndex += 2;
+                while (methodStartIndex < line.Length && char.IsWhiteSpace(line[methodStartIndex]))
+                {
+                    methodStartIndex++;
+                }
+            }
+
+            if (methodStartIndex >= line.Length)
+            {
+                return false;
+            }
+
+            int parameterStartIndex = line.IndexOf('(', methodStartIndex);
+            if (parameterStartIndex < 0)
+            {
+                return false;
+            }
+
+            int methodEndIndex = parameterStartIndex;
+            while (methodEndIndex > methodStartIndex && char.IsWhiteSpace(line[methodEndIndex - 1]))
+            {
+                methodEndIndex--;
+            }
+
+            if (methodEndIndex <= methodStartIndex)
+            {
+                return false;
+            }
+
+            string candidateMethodId = line.Substring(methodStartIndex, methodEndIndex - methodStartIndex);
+            for (int i = 0; i < candidateMethodId.Length; i++)
+            {
+                if (char.IsWhiteSpace(candidateMethodId[i]))
+                {
+                    return false;
+                }
+            }
+
+            if (!TrySplitMethodId(candidateMethodId, out _, out _, out _))
+            {
+                return false;
+            }
+
+            int parameterEndIndex = line.IndexOf(')', parameterStartIndex);
+            if (parameterEndIndex == -1)
+            {
+                return false;
+            }
+
+            prefix = line.Substring(0, methodStartIndex);
+            methodId = candidateMethodId;
+            parameters = line.Substring(parameterStartIndex, parameterEndIndex - parameterStartIndex + 1);
+            tail = line.Substring(parameterEndIndex + 1);
+            return true;
+        }
+
+        private bool TrySplitMethodId(string methodId, out string owner, out string methodName, out char separator)
+        {
+            owner = string.Empty;
+            methodName = string.Empty;
+            separator = '\0';
+
+            int colonIndex = methodId.LastIndexOf(':');
+            int dotIndex = methodId.LastIndexOf('.');
+            int separatorIndex;
+            if (colonIndex > dotIndex)
+            {
+                separatorIndex = colonIndex;
+                separator = ':';
+            }
+            else
+            {
+                separatorIndex = dotIndex;
+                separator = '.';
+            }
+
+            if (separatorIndex <= 0 || separatorIndex >= methodId.Length - 1)
+            {
+                return false;
+            }
+
+            owner = methodId.Substring(0, separatorIndex);
+            methodName = methodId.Substring(separatorIndex + 1);
+            return true;
+        }
+
+        private bool TryReplaceExceptionStackTraceLine(string line, out string replacedLine)
+        {
+            replacedLine = line;
+            if (!TryParseExceptionStackTraceLine(line, out var prefix, out var methodId, out var obfuscatedMethodParameters, out var tail))
+            {
+                return false;
+            }
+
+            if (!TrySplitMethodId(methodId, out var obfuscatedDeclaringTypeName, out var obfuscatedMethodName, out var separator))
+            {
+                return false;
+            }
             string obfuscatedExceptionMethodNameWithDeclaringType = $"{obfuscatedDeclaringTypeName}:{obfuscatedMethodName}";
-            string obfuscatedMethodParameters = m.Groups[8].Value;
+            string normalizedObfuscatedMethodParameters = NormalizeExceptionParameters(obfuscatedMethodParameters);
             if (_methodSignaturesMapping.TryGetValue(obfuscatedExceptionMethodNameWithDeclaringType, out var methodSignature))
             {
                 foreach (var mapping in methodSignature.mappings)
                 {
-                    if (mapping.newMethodParameters == obfuscatedMethodParameters)
+                    if (mapping.newMethodParameters == obfuscatedMethodParameters ||
+                        mapping.newMethodParameters == normalizedObfuscatedMethodParameters)
                     {
                         (string oldDeclaringTypeName, string oldMethodName) = SplitMethodNameWithDeclaringTypeName(mapping.oldMethodNameWithDeclaringType);
-                        return $"{m.Groups[1].Value}{oldDeclaringTypeName}{m.Groups[3].Value}.{oldMethodName}{m.Groups[6].Value}{mapping.oldMethodParameters} {m.Groups[9].Value}";
+                        replacedLine = $"{prefix}{oldDeclaringTypeName}{separator}{oldMethodName}{mapping.oldMethodParameters}{tail}";
+                        return true;
                     }
                 }
                 {
                     MethodSignatureMapping mapping = methodSignature.mappings[0];
                     (string oldDeclaringTypeName, string oldMethodName) = SplitMethodNameWithDeclaringTypeName(mapping.oldMethodNameWithDeclaringType);
-                    return $"{m.Groups[1].Value}{oldDeclaringTypeName}{m.Groups[3].Value}.{oldMethodName}{m.Groups[6].Value}{obfuscatedMethodParameters} {m.Groups[9].Value}";
+                    replacedLine = $"{prefix}{oldDeclaringTypeName}{separator}{oldMethodName}{obfuscatedMethodParameters}{tail}";
+                    return true;
                 }
             }
-            return m.Value; // Return the original match if no mapping is found
+            return false;
         }
 
         public bool TryDeobfuscateExceptionStackTrace(string obfuscatedStackTraceLog, out string oldFullSignature)
         {
-            oldFullSignature = _exceptionStackTraceRegex.Replace(obfuscatedStackTraceLog, ReplaceExceptionStackTraceMatch, 1);
-            return oldFullSignature != obfuscatedStackTraceLog;
+            if (TryReplaceExceptionStackTraceLine(obfuscatedStackTraceLog, out oldFullSignature))
+            {
+                return true;
+            }
+            oldFullSignature = obfuscatedStackTraceLog;
+            return false;
         }
 
         private Regex _normalStackTraceRegex = new Regex(@"^(\S+):(\S+)(\([^)]*\))$", RegexOptions.Compiled);
@@ -252,7 +387,17 @@ namespace DeobfuscateStackTrace
             return oldFullSignature != obfuscatedStackTraceLog;
         }
 
+        // Whole obfuscated nested type as in stack traces before outer is resolved, e.g. $qA.$OLA+$sLA
+        private readonly Regex _obfuscatedQualifiedNestedTypeRegex = new Regex(
+            @"\$[$a-zA-Z_][\w$]*(?:\.\$[$a-zA-Z_][\w$]*)*(?:[+/]\$[$a-zA-Z_][\w$]*)+",
+            RegexOptions.Compiled);
+
         private readonly Regex _typeNameRegex = new Regex(@"\$[$a-zA-Z_]+([./]\$[$a-zA-Z_]+)*", RegexOptions.Compiled);
+
+        // Outer type may include generic arity (e.g. TaskForm`1+$oV[[T,...]]) — \w does not match backtick.
+        private readonly Regex _qualifiedNestedObfuscatedTypeRegex = new Regex(
+            @"[A-Za-z_]\w*(?:`+\d+)?(?:\.[A-Za-z_]\w*(?:`+\d+)?)*(?:[+/]\$[$a-zA-Z_][\w$]*)+",
+            RegexOptions.Compiled);
 
         private string ReplaceTypeNameMatch(Match m)
         {
@@ -266,7 +411,10 @@ namespace DeobfuscateStackTrace
 
         public string TryDeobfuscateTypeName(string obfuscatedStackTraceLog)
         {
-            return _typeNameRegex.Replace(obfuscatedStackTraceLog, ReplaceTypeNameMatch);
+            // Resolve full obfuscated nested names first so partial outer replace does not break +nested lookup.
+            string withObfuscatedNestedReplaced = _obfuscatedQualifiedNestedTypeRegex.Replace(obfuscatedStackTraceLog, ReplaceTypeNameMatch);
+            string withSimpleTypeReplaced = _typeNameRegex.Replace(withObfuscatedNestedReplaced, ReplaceTypeNameMatch);
+            return _qualifiedNestedObfuscatedTypeRegex.Replace(withSimpleTypeReplaced, ReplaceTypeNameMatch);
         }
     }
 }
