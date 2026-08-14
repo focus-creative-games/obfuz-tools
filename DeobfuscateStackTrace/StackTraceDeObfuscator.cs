@@ -40,12 +40,22 @@ namespace DeobfuscateStackTrace
                     newLine = line;
                 }
                 newLine = reader.TryDeobfuscateTypeName(newLine);
-                if (!removeMethodGeneratedByObfuz || !newLine.StartsWith("$Obfuz$"))
+                if (!removeMethodGeneratedByObfuz || !IsMethodGeneratedByObfuz(newLine))
                 {
                     deObfuscatedLines.Add(newLine);
                 }
             }
             File.WriteAllLines(newLogFile, deObfuscatedLines, Encoding.UTF8);
+        }
+
+        private static bool IsMethodGeneratedByObfuz(string line)
+        {
+            string content = line.TrimStart();
+            if (content.StartsWith("at ", StringComparison.Ordinal))
+            {
+                content = content.Substring(3).TrimStart();
+            }
+            return content.StartsWith("$Obfuz$", StringComparison.Ordinal) || content.Contains("$Obfuz$ProxyCall") || content.Contains("$Obfuz$Dispatch");
         }
 
         private static bool TryConvertLine(string line, SymbolMappingReader reader, out string deObfuscatedStackTrace)
